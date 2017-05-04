@@ -514,11 +514,46 @@ static inline struct kmem_cache *slab_pre_alloc_hook(struct kmem_cache *s,
 	return s;
 }
 
+static inline bool slab_want_init_on_alloc(gfp_t flags, struct kmem_cache *c)
+{
+	if (static_branch_maybe(CONFIG_INIT_ON_ALLOC_DEFAULT_ON,
+				&init_on_alloc)) {
+		if (c->ctor)
+			return false;
+		if (c->flags & (SLAB_TYPESAFE_BY_RCU | SLAB_POISON))
+			return flags & __GFP_ZERO;
+		return true;
+	}
+	return flags & __GFP_ZERO;
+}
+
+static inline bool slab_want_init_on_free(struct kmem_cache *c)
+{
+	if (static_branch_maybe(CONFIG_INIT_ON_FREE_DEFAULT_ON,
+				&init_on_free)) {
+#ifndef CONFIG_SLUB
+		if (c->ctor)
+			return false;
+#endif
+		if (c->flags & (SLAB_TYPESAFE_BY_RCU | SLAB_POISON))
+			return false;
+		return true;
+	}
+	return false;
+}
+
+static inline bool has_sanitize_verify(struct kmem_cache *s)
+{
+	return IS_ENABLED(CONFIG_SLAB_SANITIZE_VERIFY) &&
+	       slab_want_init_on_free(s);
+}
+
 static inline void slab_post_alloc_hook(struct kmem_cache *s,
 					struct obj_cgroup *objcg, gfp_t flags,
 					size_t size, void **p, bool init)
 {
 	size_t i;
+	bool sanitize_verify = has_sanitize_verify(s);
 
 	flags &= gfp_allowed_mask;
 
@@ -530,6 +565,18 @@ static inline void slab_post_alloc_hook(struct kmem_cache *s,
 	 * As p[i] might get tagged, memset and kmemleak hook come after KASAN.
 	 */
 	for (i = 0; i < size; i++) {
+		if (sanitize_verify && p[i]) {
+			/* KASAN hasn't unpoisoned the object yet (this is done
+			* in kasan_slab_alloc), so let's do it temporarily
+			* before kasan may init the area.
+			*/
+			kasan_unpoison_object_data(s, p[i]);
+			BUG_ON(memchr_inv(p[i], 0, s->object_size));
+			if (s->ctor)
+				s->ctor(p[i]);
+			kasan_poison_object_data(s, p[i]);
+		}
+
 		p[i] = kasan_slab_alloc(s, p[i], flags, init);
 		if (p[i] && init && !kasan_has_integrated_init())
 			memset(p[i], 0, s->object_size);
@@ -616,34 +663,6 @@ static inline int cache_random_seq_create(struct kmem_cache *cachep,
 }
 static inline void cache_random_seq_destroy(struct kmem_cache *cachep) { }
 #endif /* CONFIG_SLAB_FREELIST_RANDOM */
-
-static inline bool slab_want_init_on_alloc(gfp_t flags, struct kmem_cache *c)
-{
-	if (static_branch_maybe(CONFIG_INIT_ON_ALLOC_DEFAULT_ON,
-				&init_on_alloc)) {
-		if (c->ctor)
-			return false;
-		if (c->flags & (SLAB_TYPESAFE_BY_RCU | SLAB_POISON))
-			return flags & __GFP_ZERO;
-		return true;
-	}
-	return flags & __GFP_ZERO;
-}
-
-static inline bool slab_want_init_on_free(struct kmem_cache *c)
-{
-	if (static_branch_maybe(CONFIG_INIT_ON_FREE_DEFAULT_ON,
-				&init_on_free)) {
-#ifndef CONFIG_SLUB
-		if (c->ctor)
-			return false;
-#endif
-		if (c->flags & (SLAB_TYPESAFE_BY_RCU | SLAB_POISON))
-			return false;
-		return true;
-	}
-	return false;
-}
 
 #ifdef CONFIG_PRINTK
 #define KS_ADDRS_COUNT 16

@@ -1578,7 +1578,7 @@ static __always_inline bool slab_free_hook(struct kmem_cache *s,
 		rsize = (s->flags & SLAB_RED_ZONE) ? s->red_left_pad : 0;
 		memset((char *)kasan_reset_tag(x) + s->inuse, 0,
 		       s->size - s->inuse - rsize);
-		if (s->ctor)
+		if (!IS_ENABLED(CONFIG_SLAB_SANITIZE_VERIFY) && s->ctor)
 			s->ctor(x);
 	}
 	/* KASAN might put x into memory quarantine, delaying its reuse. */
@@ -1638,7 +1638,7 @@ static void *setup_object(struct kmem_cache *s, struct page *page,
 {
 	setup_object_debug(s, page, object);
 	object = kasan_init_slab_obj(s, object);
-	if (unlikely(s->ctor)) {
+	if (unlikely(s->ctor) && !has_sanitize_verify(s)) {
 		kasan_unpoison_object_data(s, object);
 		s->ctor(object);
 		kasan_poison_object_data(s, object);
