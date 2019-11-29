@@ -1663,9 +1663,10 @@ static inline bool slab_free_freelist_hook(struct kmem_cache *s,
 			 * need to show a valid freepointer to check_object().
 			 *
 			 * Note that doing this for all caches (not just ctor
-			 * ones, which have s->offset != NULL)) causes a GPF,
-			 * due to KASAN poisoning and the way set_freepointer()
-			 * eventually dereferences the freepointer.
+			 * ones, which have s->offset >= object_size)) causes a
+			 * GPF, due to KASAN poisoning and the way
+			 * set_freepointer() eventually dereferences the
+			 * freepointer.
 			 */
 			set_freepointer(s, object, NULL);
 		}
